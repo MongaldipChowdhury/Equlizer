@@ -1,0 +1,232 @@
+<!DOCTYPE html><html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>🎵 Music Player</title>
+  <title>Mongaldip</title>
+  <style>
+    :root {
+      --bg: #111;
+      --text: #fff;
+      --accent: #2196F3;
+    }
+    body.light {
+      --bg: #f0f0f0;
+      --text: #111;
+      --accent: #007ACC;
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', sans-serif;
+      text-align: center;
+      padding: 2em;
+      transition: background 0.3s, color 0.3s;
+    }
+    input, button {
+      margin: 10px;
+      padding: 10px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+    }
+    button {
+      background-color: var(--accent);
+      color: white;
+      cursor: pointer;
+    }
+    .eq-container {
+      margin-top: 2em;
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .eq-band {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .eq-band input {
+      writing-mode: bt-lr;
+      transform: rotate(270deg);
+      margin: 5px 0;
+    }
+    canvas {
+      margin-top: 40px;
+      background-color: #000;
+      width: 100%;
+      max-width: 800px;
+      height: 150px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎧 Music Player</h1>
+<h2>By Mongaldip</h2><input type="file" id="audioFile" accept="audio/*" /> <br/>
+
+<label>Repeat every (seconds):</label> <input type="number" id="repeatDelay" min="0.1" max="300" step="0.1" value="0.5" />
+
+<label>Repeat count:</label> <input type="number" id="repeatCount" min="1" max="10" value="1" /> <br/>
+
+<label>Auto Repeat:</label> <input type="checkbox" id="autoRepeat" />
+
+  <br/>
+  <button onclick="playMusic()">▶️ Bajao</button>
+  <button onclick="togglePause()">⏸️ Pause / Resume</button>
+  <button onclick="resetEQ()">🔄 Reset EQ</button>
+  <button onclick="toggleTheme()">🌓 Dark/Light</button>  <div class="eq-container" id="equalizer"></div><canvas id="visualizer"></canvas>
+
+  <script>
+    let audioContext;
+    let currentSource = null;
+    let repeatTimers = [];
+    let isPaused = false;
+    let eqNodes = [];
+    const bands = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000];
+
+    function createEqualizerUI() {
+      const container = document.getElementById("equalizer");
+      container.innerHTML = '';
+      bands.forEach((band, i) => {
+        const wrapper = document.createElement('div');
+        wrapper.className = "eq-band";
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = -10;
+        slider.max = 10;
+        slider.value = 0;
+        slider.step = 0.5;
+        slider.dataset.index = i;
+        slider.addEventListener('input', () => {
+          const idx = parseInt(slider.dataset.index);
+          const gain = parseFloat(slider.value);
+          eqNodes[idx].gain.value = gain;
+        });
+
+        const label = document.createElement('label');
+        label.innerText = `${band}Hz`;
+
+        wrapper.appendChild(slider);
+        wrapper.appendChild(label);
+        container.appendChild(wrapper);
+      });
+    }
+
+    function setupEqualizerChain(source) {
+      let input = source;
+      eqNodes = [];
+      bands.forEach(freq => {
+        const filter = audioContext.createBiquadFilter();
+        filter.type = "peaking";
+        filter.frequency.value = freq;
+        filter.Q.value = 1;
+        filter.gain.value = 0;
+        input.connect(filter);
+        input = filter;
+        eqNodes.push(filter);
+      });
+      return input;
+    }
+
+    function stopAll() {
+      repeatTimers.forEach(timer => clearTimeout(timer));
+      repeatTimers = [];
+      if (currentSource) {
+        try { currentSource.stop(); } catch (e) {}
+        currentSource = null;
+      }
+    }
+
+    function playMusic() {
+      stopAll();
+      const file = document.getElementById('audioFile').files[0];
+      const delay = parseFloat(document.getElementById('repeatDelay').value);
+      const repeatCount = parseInt(document.getElementById('repeatCount').value);
+      const autoRepeat = document.getElementById('autoRepeat').checked;
+      if (!file || isNaN(delay) || isNaN(repeatCount)) return alert("Select a file and valid inputs.");
+
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        createEqualizerUI();
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        audioContext.decodeAudioData(e.target.result, function(buffer) {
+          function schedulePlay(times) {
+            for (let i = 0; i < times; i++) {
+              const timer = setTimeout(() => playBuffer(buffer), i * delay * 1000);
+              repeatTimers.push(timer);
+            }
+          }
+          schedulePlay(repeatCount);
+          if (autoRepeat) {
+            const loopTimer = setInterval(() => schedulePlay(repeatCount), repeatCount * delay * 1000);
+            repeatTimers.push(loopTimer);
+          }
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function playBuffer(buffer) {
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 256;
+
+      let eqOutput = setupEqualizerChain(source);
+      eqOutput.connect(analyser);
+      analyser.connect(audioContext.destination);
+
+      source.start(0);
+      currentSource = source;
+      visualize(analyser);
+    }
+
+    function togglePause() {
+      if (!audioContext) return;
+      if (!isPaused) {
+        audioContext.suspend().then(() => isPaused = true);
+      } else {
+        audioContext.resume().then(() => isPaused = false);
+      }
+    }
+
+    function resetEQ() {
+      document.querySelectorAll('#equalizer input[type="range"]').forEach((slider, idx) => {
+        slider.value = 0;
+        if (eqNodes[idx]) eqNodes[idx].gain.value = 0;
+      });
+    }
+
+    function toggleTheme() {
+      document.body.classList.toggle("light");
+    }
+
+    function visualize(analyser) {
+      const canvas = document.getElementById('visualizer');
+      const ctx = canvas.getContext('2d');
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      function draw() {
+        requestAnimationFrame(draw);
+        analyser.getByteFrequencyData(dataArray);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const barWidth = canvas.width / dataArray.length;
+        let x = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const barHeight = dataArray[i];
+          ctx.fillStyle = `rgb(${barHeight + 100}, 50, 150)`;
+          ctx.fillRect(x, canvas.height - barHeight / 2, barWidth, barHeight / 2);
+          x += barWidth;
+        }
+      }
+      draw();
+    }
+  </script></body>
+</html>
